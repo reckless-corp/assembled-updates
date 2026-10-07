@@ -1,0 +1,52 @@
+name: Assemble and upload
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: assembled-updates-publish
+  cancel-in-progress: false
+jobs:
+  assemble:
+    if: github.repository == 'reckless-corp/assembled-updates' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, Linux, X64]
+    environment: update-server
+    timeout-minutes: 90
+    env:
+      ARCHIVE_ROOT: /var/code/reckless-corp/storage/archive
+      UPDATE_SERVER_URL: ${{ vars.UPDATE_SERVER_URL }}
+      UPDATE_TAG: ${{ vars.UPDATE_TAG }}
+      FIOCLI_CONFIG_ROOT: ${{ runner.temp }}/assembled-fiocli-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: true
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Validate configuration
+        run: |
+          test -n "$UPDATE_SERVER_URL"
+          test -n "$UPDATE_TAG"
+      - name: Download pinned tools
+        run: bash scripts/download-tools.sh
+      - name: Assemble both machines before uploading either
+        run: |
+          python3 scripts/assemble.py --archive-root "$ARCHIVE_ROOT" --output out --composectl "$PWD/.tools/bin/composectl"
+      - name: Upload both updates
+        env:
+          UPDATE_SERVER_TOKEN: ${{ secrets.UPDATE_SERVER_TOKEN }}
+        run: python3 scripts/upload.py --output out --fiocli "$PWD/.tools/bin/fiocli"
+      - name: Remove temporary credentials
+        if: always()
+        run: python3 -c 'import os, shutil; shutil.rmtree(os.environ["FIOCLI_CONFIG_ROOT"], ignore_errors=True)'
+      - name: Preserve provenance
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: provenance-${{ github.run_number }}-${{ github.run_attempt }}
+          path: out/provenance.json
+          if-no-files-found: ignore
