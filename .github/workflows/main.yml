@@ -16,8 +16,9 @@ jobs:
     timeout-minutes: 90
     env:
       ARCHIVE_ROOT: /var/code/reckless-corp/storage/archive
-      UPDATE_SERVER_URL: ${{ vars.UPDATE_SERVER_URL }}
-      UPDATE_TAG: ${{ vars.UPDATE_TAG }}
+      # Non-empty variables take precedence over secrets with the same name.
+      UPDATE_SERVER_URL: ${{ vars.UPDATE_SERVER_URL || secrets.UPDATE_SERVER_URL }}
+      UPDATE_TAG: ${{ vars.UPDATE_TAG || secrets.UPDATE_TAG }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -28,8 +29,16 @@ jobs:
           python-version: '3.12'
       - name: Validate configuration
         run: |
-          test -n "$UPDATE_SERVER_URL"
-          test -n "$UPDATE_TAG"
+          missing=0
+          if [ -z "$UPDATE_SERVER_URL" ]; then
+            echo "::error::Missing UPDATE_SERVER_URL: set a repository or update-server environment variable or secret."
+            missing=1
+          fi
+          if [ -z "$UPDATE_TAG" ]; then
+            echo "::error::Missing UPDATE_TAG: set a repository or update-server environment variable or secret."
+            missing=1
+          fi
+          exit "$missing"
       - name: Download pinned tools
         run: bash scripts/download-tools.sh
       - name: Assemble both machines before uploading either
