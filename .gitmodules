@@ -1,0 +1,6 @@
+[submodule "composeapps"]
+	path = composeapps
+	url = https://github.com/reckless-corp/composeapps.git
+[submodule "meta-foundries"]
+	path = meta-foundries
+	url = https://github.com/reckless-corp/meta-foundries.git
