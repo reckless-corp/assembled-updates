@@ -72,7 +72,8 @@ assembled and locally checked before either upload starts. Sources are not modif
    this public repository's self-hosted runner isolated from other workloads.
 
 Only a push to `main`, or manual dispatch selecting `main`, can use the publishing
-runner. Pull requests run unit tests on GitHub-hosted Ubuntu and receive no
+runner. Pull requests validate every workflow with actionlint, run unit tests,
+and smoke-test the pinned CLIs on GitHub-hosted Ubuntu. They receive no
 publishing secret or NFS access. A merge produces a push and starts assembly.
 Direct pushes to main also trigger it, so enforce branch protection if all
 publishing changes must be merged PRs. Workflows currently use major-version
@@ -126,6 +127,7 @@ archives are still present. Review machine/app mapping when producer apps change
 ## Local checks
 
 ```
+bash scripts/lint-workflows.sh
 python3 -m unittest discover -s tests -v
 python3 scripts/assemble.py --archive-root /path/to/archive --output out --composectl /path/to/composectl
 ```
@@ -139,6 +141,12 @@ Official Linux amd64 release binaries and their published SHA256 checksums are
 pinned once in `scripts/download-tools.sh`, shared by both workflows:
 - fiocli: [foundriesio/update-server v1.0-rc1](https://github.com/foundriesio/update-server/releases/tag/v1.0-rc1)
 - composectl: [foundriesio/composeapp v96.3.0](https://github.com/foundriesio/composeapp/releases/tag/v96.3.0)
+
+PR CI also runs official [actionlint v1.7.12](https://github.com/rhysd/actionlint/releases/tag/v1.7.12),
+downloaded and SHA256-verified by `scripts/lint-workflows.sh`, against every
+workflow, including the main-only publishing workflow. This catches unsupported
+expression contexts as well as workflow syntax errors. The lint script requires
+Linux x86_64, curl, sha256sum, and tar; it does not require Go, ShellCheck, or Pyflakes.
 
 PR CI downloads, verifies, and smoke-tests both CLIs without NFS or server
 credentials. Neither workflow builds the tools or needs Go or Git LFS.

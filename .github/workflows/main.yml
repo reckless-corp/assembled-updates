@@ -18,7 +18,6 @@ jobs:
       ARCHIVE_ROOT: /var/code/reckless-corp/storage/archive
       UPDATE_SERVER_URL: ${{ vars.UPDATE_SERVER_URL }}
       UPDATE_TAG: ${{ vars.UPDATE_TAG }}
-      FIOCLI_CONFIG_ROOT: ${{ runner.temp }}/assembled-fiocli-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -38,10 +37,13 @@ jobs:
           python3 scripts/assemble.py --archive-root "$ARCHIVE_ROOT" --output out --composectl "$PWD/.tools/bin/composectl"
       - name: Upload both updates
         env:
+          FIOCLI_CONFIG_ROOT: ${{ runner.temp }}/assembled-fiocli-${{ github.run_id }}-${{ github.run_attempt }}
           UPDATE_SERVER_TOKEN: ${{ secrets.UPDATE_SERVER_TOKEN }}
         run: python3 scripts/upload.py --output out --fiocli "$PWD/.tools/bin/fiocli"
       - name: Remove temporary credentials
         if: always()
+        env:
+          FIOCLI_CONFIG_ROOT: ${{ runner.temp }}/assembled-fiocli-${{ github.run_id }}-${{ github.run_attempt }}
         run: python3 -c 'import os, shutil; shutil.rmtree(os.environ["FIOCLI_CONFIG_ROOT"], ignore_errors=True)'
       - name: Preserve provenance
         if: always()

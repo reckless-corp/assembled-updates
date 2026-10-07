@@ -4,6 +4,15 @@ on:
 permissions:
   contents: read
 jobs:
+  workflows:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Validate all GitHub Actions workflows
+        run: bash scripts/lint-workflows.sh
   test:
     runs-on: ubuntu-latest
     steps:
