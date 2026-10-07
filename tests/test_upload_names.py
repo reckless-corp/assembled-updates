@@ -64,14 +64,14 @@ class UploadNameTests(unittest.TestCase):
                 name = "release-intel-corei7-64"
                 target = {"hashes": {"sha256": "b" * 64}, "custom": {
                     "name": name, "version": "4291", "hardwareIds": [self.machines[0]],
-                    "tags": ["main"], "targetFormat": "OSTREE", "docker_compose_apps": {}}}
+                    "tags": ["reckless-corp"], "targetFormat": "OSTREE", "docker_compose_apps": {}}}
                 tuf = {"targets.json": {"signed": {"targets": {name + "-4291": target}}}}
                 env = {"GITHUB_SHA": self.sha, "GITHUB_RUN_NUMBER": "73",
-                       "UPDATE_SERVER_URL": "https://updates.example.test", "UPDATE_TAG": "main",
+                       "UPDATE_SERVER_URL": "https://updates.example.test",
                        "UPDATE_SERVER_TOKEN": "test-token"}
                 stdout = io.StringIO()
                 with patch("upload.git_output", side_effect=["name-format=release-{{MACHINE}}", "aaaaaaa"]), \
-                     patch("upload.get_json", side_effect=[[{"name": name, "tag": "main"}], tuf]) as get, \
+                     patch("upload.get_json", side_effect=[[{"name": name, "tag": "reckless-corp"}], tuf]) as get, \
                      patch("upload.subprocess.run", side_effect=RuntimeError("failed") if failing else None) as run, \
                      patch("sys.stdout", stdout):
                     if failing:
@@ -81,6 +81,7 @@ class UploadNameTests(unittest.TestCase):
                         upload.upload(temp, "fiocli", env)
                 get.assert_called_with("https://updates.example.test/v1/updates/" + name + "/tuf", "test-token")
                 cmd = run.call_args.args[0]
+                self.assertEqual(cmd[5], "uno-q")
                 self.assertEqual(cmd[6], "release-uno-q")
                 self.assertEqual(cmd[cmd.index("--name") + 1], "release-uno-q")
                 self.assertNotIn("--version", cmd)
@@ -95,7 +96,7 @@ class UploadNameTests(unittest.TestCase):
             Path(temp, "provenance.json").write_text(json.dumps({
                 "assembled_commit": self.sha, "machines": {m: {} for m in self.machines}}))
             env = {"GITHUB_SHA": self.sha, "GITHUB_RUN_NUMBER": "73",
-                   "UPDATE_SERVER_URL": "https://updates.example.test", "UPDATE_TAG": "main",
+                   "UPDATE_SERVER_URL": "https://updates.example.test",
                    "UPDATE_SERVER_TOKEN": "test-token"}
             with patch("upload.git_output", side_effect=["name-format=duplicate", "aaaaaaa"]), \
                  patch("upload.get_json") as get, patch("upload.subprocess.run") as run:

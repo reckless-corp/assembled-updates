@@ -30,10 +30,10 @@ archives for the same SHA, resolve that ambiguity before assembling.
 
 ## Machine selection
 
-| Hardware ID | Architecture | Compose apps |
-| --- | --- | --- |
-| intel-corei7-64 | amd64 | matrix-app |
-| uno-q | arm64 | matrix-app, uno-q-hat-app |
+| Hardware ID | Architecture | Compose apps | Update tag |
+| --- | --- | --- | --- |
+| intel-corei7-64 | amd64 | matrix-app | reckless-corp |
+| uno-q | arm64 | matrix-app, uno-q-hat-app | uno-q |
 
 Names and digests are verified from the archive's
 `apps/apps/<app-name>/<sha256>/{uri,manifest.json}`. Each selected app must have
@@ -60,10 +60,9 @@ assembled and locally checked before either upload starts. Sources are not modif
    read-only access to the NFS archive. It needs network access for submodule
    checkouts, pinned GitHub release downloads, GitHub Actions, and the update server. Assembly
    itself obtains all application and OS payloads from NFS.
-2. Create GitHub environment `update-server`. Set these as repository-level or
-   `update-server` environment variables or secrets:
+2. Create GitHub environment `update-server`. Set this as a repository-level or
+   `update-server` environment variable or secret:
    - `UPDATE_SERVER_URL`: HTTPS base URL of the server
-   - `UPDATE_TAG`: the desired update tag (for example `main`)
    A non-empty variable takes precedence over a secret with the same name.
 3. Add repository-level or `update-server` environment secret `UPDATE_SERVER_TOKEN`
    with upload permission for the intended server. This token is read only from

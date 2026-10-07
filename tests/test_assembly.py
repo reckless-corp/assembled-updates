@@ -129,7 +129,7 @@ class AssemblyTests(unittest.TestCase):
         self.assertEqual([cmd[cmd.index("-a") + 1] for cmd in calls], ["amd64", "arm64"])
 
     def upload_env(self):
-        return {"UPDATE_SERVER_URL": "https://updates.example.test", "UPDATE_TAG": "main",
+        return {"UPDATE_SERVER_URL": "https://updates.example.test",
                 "UPDATE_SERVER_TOKEN": "test-token", "GITHUB_SHA": "a" * 40, "GITHUB_RUN_NUMBER": "73"}
 
     def mock_upload_git(self, message="Pin builds"):
@@ -139,8 +139,11 @@ class AssemblyTests(unittest.TestCase):
 
     def test_settings(self):
         env = self.upload_env()
-        self.assertEqual(upload.settings(env), (env["UPDATE_SERVER_URL"], "main", "test-token"))
-        for key, value in [("UPDATE_SERVER_URL", "http://bad.test"), ("UPDATE_TAG", "../bad"),
+        self.assertNotIn("UPDATE_TAG", env)
+        self.assertEqual(upload.settings(env), (env["UPDATE_SERVER_URL"], "test-token"))
+        self.assertEqual(upload.settings({**env, "UPDATE_TAG": "../obsolete"}),
+                         (env["UPDATE_SERVER_URL"], "test-token"))
+        for key, value in [("UPDATE_SERVER_URL", "http://bad.test"),
                            ("UPDATE_SERVER_TOKEN", "")]:
             with self.assertRaises(ValueError):
                 upload.settings({**env, key: value})
@@ -162,6 +165,7 @@ class AssemblyTests(unittest.TestCase):
             self.assertNotIn("test-token", " ".join(cmd))
             self.assertNotIn("--version", cmd)
             machine = cmd[cmd.index("--hardware-id") + 1]
+            self.assertEqual(cmd[5], {"intel-corei7-64": "reckless-corp", "uno-q": "uno-q"}[machine])
             self.assertEqual(cmd[6], f"73_aaaaaaa_{machine}")
             self.assertEqual(cmd[cmd.index("--name") + 1], cmd[6])
             self.assertIn("matrix-app=" + "c" * 64, cmd)
@@ -189,16 +193,16 @@ class AssemblyTests(unittest.TestCase):
         data = {"ostree_sha256": digest, "apps": {"matrix-app": {"sha256": "c" * 64}}}
         target = {"hashes": {"sha256": digest}, "custom": {
             "name": f"{machine}-{sha}", "version": "1007", "hardwareIds": [machine],
-            "tags": ["main"], "targetFormat": "OSTREE", "docker_compose_apps": {
+            "tags": ["uno-q"], "targetFormat": "OSTREE", "docker_compose_apps": {
                 "matrix-app": {"uri": "updates.example.test/composeapphack/matrix-app@sha256:" + "c" * 64}}}}
         tuf = {"targets.json": {"signed": {"targets": {f"{machine}-{sha}-1007": target}}}}
-        upload.verify_existing(tuf, machine, data, f"{machine}-{sha}", "main", "updates.example.test")
+        upload.verify_existing(tuf, machine, data, f"{machine}-{sha}", "uno-q", "updates.example.test")
         for key, value in [("version", "1008"), ("hardwareIds", ["intel-corei7-64"]),
                            ("tags", ["other"]), ("docker_compose_apps", {})]:
             old = target["custom"][key]
             target["custom"][key] = value
             with self.assertRaises(ValueError):
-                upload.verify_existing(tuf, machine, data, f"{machine}-{sha}", "main", "updates.example.test")
+                upload.verify_existing(tuf, machine, data, f"{machine}-{sha}", "uno-q", "updates.example.test")
             target["custom"][key] = old
 
     def test_resume_uses_existing_server_version_and_uploads_missing_machine(self):
@@ -212,30 +216,65 @@ class AssemblyTests(unittest.TestCase):
         name = "73_aaaaaaa_intel-corei7-64"
         target = {"hashes": {"sha256": "b" * 64}, "custom": {
             "name": name, "version": "4291", "hardwareIds": ["intel-corei7-64"],
-            "tags": ["main"], "targetFormat": "OSTREE", "docker_compose_apps": {}}}
+            "tags": ["reckless-corp"], "targetFormat": "OSTREE", "docker_compose_apps": {}}}
         tuf = {"targets.json": {"signed": {"targets": {f"{name}-4291": target}}}}
-        with patch("upload.get_json", side_effect=[[{"name": name, "tag": "main"}], tuf]), \
+        with patch("upload.get_json", side_effect=[[{"name": name, "tag": "reckless-corp"}], tuf]), \
              patch("upload.subprocess.run") as run:
             upload.upload(self.root, "fiocli", env)
         run.assert_called_once()
         self.assertEqual(run.call_args.args[0][6], "73_aaaaaaa_uno-q")
         self.assertNotIn("--version", run.call_args.args[0])
 
+    def test_resume_requires_machine_tags_in_update_list_and_tuf(self):
+        expected_tags = {"intel-corei7-64": "reckless-corp", "uno-q": "uno-q"}
+        cases = [(None, None)] + [(machine, source) for machine in expected_tags
+                                 for source in ["list", "tuf"]]
+        for mismatch_machine, mismatch_source in cases:
+            with self.subTest(machine=mismatch_machine, source=mismatch_source):
+                env = self.upload_env()
+                record = {"assembled_commit": env["GITHUB_SHA"], "machines": {
+                    machine: {"ostree_sha256": "b" * 64, "apps": {}}
+                    for machine in expected_tags}}
+                (self.root / "provenance.json").write_text(json.dumps(record))
+                updates, metadata = [], []
+                for machine, tag in expected_tags.items():
+                    name = f"73_aaaaaaa_{machine}"
+                    # The other machine's valid tag must not be accepted here.
+                    wrong_tag = "uno-q" if machine == "intel-corei7-64" else "reckless-corp"
+                    mismatch = machine == mismatch_machine
+                    updates.append({"name": name, "tag": wrong_tag
+                                    if mismatch and mismatch_source == "list" else tag})
+                    target = {"hashes": {"sha256": "b" * 64}, "custom": {
+                        "name": name, "version": "4291", "hardwareIds": [machine],
+                        "tags": [wrong_tag if mismatch and mismatch_source == "tuf" else tag],
+                        "targetFormat": "OSTREE", "docker_compose_apps": {}}}
+                    metadata.append({"targets.json": {"signed": {
+                        "targets": {f"{name}-4291": target}}}})
+                with patch("upload.git_output", side_effect=["Pin builds", "aaaaaaa"]), \
+                     patch("upload.get_json", side_effect=[updates, *metadata]), \
+                     patch("upload.subprocess.run") as run:
+                    if mismatch_machine:
+                        with self.assertRaisesRegex(ValueError, "different tag|metadata differs"):
+                            upload.upload(self.root, "fiocli", env)
+                    else:
+                        upload.upload(self.root, "fiocli", env)
+                run.assert_not_called()
+
     def test_existing_update_rejects_invalid_version_and_target_identity(self):
         sha, machine = "a" * 40, "uno-q"
         data = {"ostree_sha256": "b" * 64, "apps": {}}
         target = {"hashes": {"sha256": "b" * 64}, "custom": {
             "name": f"{machine}-{sha}", "version": "92", "hardwareIds": [machine],
-            "tags": ["main"], "targetFormat": "OSTREE", "docker_compose_apps": {}}}
+            "tags": ["uno-q"], "targetFormat": "OSTREE", "docker_compose_apps": {}}}
         for version in (None, "", "0", "-1", "abc", 92):
             target["custom"]["version"] = version
             tuf = {"targets.json": {"signed": {"targets": {f"{machine}-{sha}-{version}": target}}}}
             with self.assertRaises(ValueError):
-                upload.verify_existing(tuf, machine, data, f"{machine}-{sha}", "main", "updates.example.test")
+                upload.verify_existing(tuf, machine, data, f"{machine}-{sha}", "uno-q", "updates.example.test")
         target["custom"]["version"] = "92"
         tuf = {"targets.json": {"signed": {"targets": {"wrong-name-92": target}}}}
         with self.assertRaises(ValueError):
-            upload.verify_existing(tuf, machine, data, f"{machine}-{sha}", "main", "updates.example.test")
+            upload.verify_existing(tuf, machine, data, f"{machine}-{sha}", "uno-q", "updates.example.test")
 
 
 if __name__ == "__main__":
