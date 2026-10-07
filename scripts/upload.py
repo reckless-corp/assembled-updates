@@ -22,8 +22,48 @@ def get_json(url, token):
         return json.load(response)
 
 
-def verify_existing(tuf, machine, data, sha, tag, host):
-    target_name = f"{machine}-{sha}"
+DEFAULT_NAME_FORMAT = "{{BUILD_NUM}}_{{GITHASH}}_{{MACHINE}}"
+
+
+def git_output(*args):
+    # The message is data, never shell input. Read the recorded assembled commit,
+    # not HEAD, a PR body, or one of the submodule commits.
+    return subprocess.check_output(["git", *args], text=True)
+
+
+def update_names(sha, machines, env):
+    build_num = env.get("GITHUB_RUN_NUMBER", "")
+    if not re.fullmatch(r"[1-9][0-9]*", build_num):
+        raise ValueError("GITHUB_RUN_NUMBER must be a positive integer")
+    message = git_output("show", "-s", "--format=%B", sha, "--")
+    formats = [line[len("name-format="):] for line in message.splitlines()
+               if line.startswith("name-format=")]
+    if len(formats) > 1:
+        raise ValueError("Commit message must contain at most one name-format= line")
+    template = formats[0] if formats else DEFAULT_NAME_FORMAT
+    short_sha = git_output("rev-parse", "--short", sha).strip()
+    if not re.fullmatch(r"[0-9a-f]{4,40}", short_sha) or not sha.startswith(short_sha):
+        raise ValueError("Git returned an invalid short hash for the assembled commit")
+    names = {}
+    for machine in machines:
+        name = template
+        for key, value in {"GITHASH": short_sha, "MACHINE": machine,
+                           "BUILD_NUM": build_num}.items():
+            name = name.replace("{{" + key + "}}", value)
+        if "{" in name or "}" in name:
+            raise ValueError("name-format contains an unknown or malformed placeholder; "
+                             "use {{GITHASH}}, {{MACHINE}}, or {{BUILD_NUM}}")
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", name):
+            raise ValueError("Rendered update names must be nonempty safe path components "
+                             "using letters, digits, underscores, dots, and hyphens")
+        names[machine] = name
+    if len(set(names.values())) != len(names):
+        raise ValueError("name-format must produce a distinct name for each machine; "
+                         "include {{MACHINE}}")
+    return names
+
+
+def verify_existing(tuf, machine, data, target_name, tag, host):
     targets = tuf["targets.json"]["signed"]["targets"]
     if len(targets) != 1:
         raise ValueError("Existing update has different TUF target identity")
@@ -68,6 +108,7 @@ def upload(output, fiocli, env=None):
         raise ValueError("Provenance must match GITHUB_SHA")
     if set(record["machines"]) != {"intel-corei7-64", "uno-q"}:
         raise ValueError("Both expected machine builds are required")
+    names = update_names(sha, record["machines"], env)
     existing = get_json(url.rstrip("/") + "/v1/updates", token)
     if not isinstance(existing, list):
         raise ValueError("Unexpected updates API response")
@@ -83,22 +124,26 @@ def upload(output, fiocli, env=None):
         child_env = dict(env)
         child_env.pop("UPDATE_SERVER_TOKEN", None)
         for machine, data in record["machines"].items():
-            name = f"{machine}-{sha}"
+            name = names[machine]
             matches = [item for item in existing if item["name"] == name]
             if matches:
                 if len(matches) != 1 or matches[0]["tag"] != tag:
                     raise ValueError("Existing update name has a different tag or is ambiguous")
                 metadata = get_json(url.rstrip("/") + f"/v1/updates/{name}/tuf", token)
-                verify_existing(metadata, machine, data, sha, tag, urlsplit(url).netloc)
+                verify_existing(metadata, machine, data, name, tag, urlsplit(url).netloc)
                 print(f"Verified existing {name}; skipping upload", flush=True)
                 continue
             cmd = [fiocli, "--config", str(config), "updates", "upload", tag, name,
                    str(output / machine), "--hardware-id", machine,
-                   "--name", f"{machine}-{sha}", "--ostree-hash", data["ostree_sha256"]]
+                   "--name", name, "--ostree-hash", data["ostree_sha256"]]
             for app, info in sorted(data["apps"].items()):
                 cmd.extend(["--apps", f"{app}={info['sha256']}"])
-            subprocess.run(cmd, check=True, env=child_env)
-            print(f"Uploaded {name}", flush=True)
+            print(f"::group::Upload {machine}: {name}", flush=True)
+            try:
+                subprocess.run(cmd, check=True, env=child_env)
+                print(f"Uploaded {name}", flush=True)
+            finally:
+                print("::endgroup::", flush=True)
 
 
 if __name__ == "__main__":

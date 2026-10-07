@@ -130,7 +130,12 @@ class AssemblyTests(unittest.TestCase):
 
     def upload_env(self):
         return {"UPDATE_SERVER_URL": "https://updates.example.test", "UPDATE_TAG": "main",
-                "UPDATE_SERVER_TOKEN": "test-token", "GITHUB_SHA": "a" * 40}
+                "UPDATE_SERVER_TOKEN": "test-token", "GITHUB_SHA": "a" * 40, "GITHUB_RUN_NUMBER": "73"}
+
+    def mock_upload_git(self, message="Pin builds"):
+        mocked = patch("upload.git_output", side_effect=[message, "aaaaaaa\n"])
+        mocked.start()
+        self.addCleanup(mocked.stop)
 
     def test_settings(self):
         env = self.upload_env()
@@ -147,6 +152,7 @@ class AssemblyTests(unittest.TestCase):
             for m, (_, names) in assemble.MACHINES.items()}}
         (self.root / "provenance.json").write_text(json.dumps(record))
         paths = []
+        self.mock_upload_git()
         def fake(cmd, check, env):
             config = Path(cmd[2])
             paths.append(config)
@@ -156,7 +162,8 @@ class AssemblyTests(unittest.TestCase):
             self.assertNotIn("test-token", " ".join(cmd))
             self.assertNotIn("--version", cmd)
             machine = cmd[cmd.index("--hardware-id") + 1]
-            self.assertEqual(cmd[6], f"{machine}-" + "a" * 40)
+            self.assertEqual(cmd[6], f"73_aaaaaaa_{machine}")
+            self.assertEqual(cmd[cmd.index("--name") + 1], cmd[6])
             self.assertIn("matrix-app=" + "c" * 64, cmd)
         with patch("upload.get_json", return_value=[]), patch("upload.subprocess.run", side_effect=fake) as mocked:
             upload.upload(self.root, "fiocli", env)
@@ -169,6 +176,7 @@ class AssemblyTests(unittest.TestCase):
             m: {"ostree_sha256": "b" * 64, "apps": {}} for m in assemble.MACHINES}}
         (self.root / "provenance.json").write_text(json.dumps(record))
         paths = []
+        self.mock_upload_git()
         def fail(cmd, **kwargs):
             paths.append(Path(cmd[2]))
             raise RuntimeError("upload failed")
@@ -184,13 +192,13 @@ class AssemblyTests(unittest.TestCase):
             "tags": ["main"], "targetFormat": "OSTREE", "docker_compose_apps": {
                 "matrix-app": {"uri": "updates.example.test/composeapphack/matrix-app@sha256:" + "c" * 64}}}}
         tuf = {"targets.json": {"signed": {"targets": {f"{machine}-{sha}-1007": target}}}}
-        upload.verify_existing(tuf, machine, data, sha, "main", "updates.example.test")
+        upload.verify_existing(tuf, machine, data, f"{machine}-{sha}", "main", "updates.example.test")
         for key, value in [("version", "1008"), ("hardwareIds", ["intel-corei7-64"]),
                            ("tags", ["other"]), ("docker_compose_apps", {})]:
             old = target["custom"][key]
             target["custom"][key] = value
             with self.assertRaises(ValueError):
-                upload.verify_existing(tuf, machine, data, sha, "main", "updates.example.test")
+                upload.verify_existing(tuf, machine, data, f"{machine}-{sha}", "main", "updates.example.test")
             target["custom"][key] = old
 
     def test_resume_uses_existing_server_version_and_uploads_missing_machine(self):
@@ -200,7 +208,8 @@ class AssemblyTests(unittest.TestCase):
             machine: {"ostree_sha256": "b" * 64, "apps": {}}
             for machine in assemble.MACHINES}}
         (self.root / "provenance.json").write_text(json.dumps(record))
-        name = f"intel-corei7-64-{sha}"
+        self.mock_upload_git()
+        name = "73_aaaaaaa_intel-corei7-64"
         target = {"hashes": {"sha256": "b" * 64}, "custom": {
             "name": name, "version": "4291", "hardwareIds": ["intel-corei7-64"],
             "tags": ["main"], "targetFormat": "OSTREE", "docker_compose_apps": {}}}
@@ -209,7 +218,7 @@ class AssemblyTests(unittest.TestCase):
              patch("upload.subprocess.run") as run:
             upload.upload(self.root, "fiocli", env)
         run.assert_called_once()
-        self.assertEqual(run.call_args.args[0][6], f"uno-q-{sha}")
+        self.assertEqual(run.call_args.args[0][6], "73_aaaaaaa_uno-q")
         self.assertNotIn("--version", run.call_args.args[0])
 
     def test_existing_update_rejects_invalid_version_and_target_identity(self):
@@ -222,11 +231,11 @@ class AssemblyTests(unittest.TestCase):
             target["custom"]["version"] = version
             tuf = {"targets.json": {"signed": {"targets": {f"{machine}-{sha}-{version}": target}}}}
             with self.assertRaises(ValueError):
-                upload.verify_existing(tuf, machine, data, sha, "main", "updates.example.test")
+                upload.verify_existing(tuf, machine, data, f"{machine}-{sha}", "main", "updates.example.test")
         target["custom"]["version"] = "92"
         tuf = {"targets.json": {"signed": {"targets": {"wrong-name-92": target}}}}
         with self.assertRaises(ValueError):
-            upload.verify_existing(tuf, machine, data, sha, "main", "updates.example.test")
+            upload.verify_existing(tuf, machine, data, f"{machine}-{sha}", "main", "updates.example.test")
 
 
 if __name__ == "__main__":
