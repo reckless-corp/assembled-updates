@@ -35,6 +35,21 @@ archives for the same SHA, resolve that ambiguity before assembling.
 | intel-corei7-64 | amd64 | matrix-app | reckless-corp |
 | uno-q | arm64 | matrix-app, led-matrix-anim-app | uno-q |
 
+By default, both platforms are assembled and uploaded. To create an update for
+only one platform, add a standalone line to the assembled commit message:
+
+```
+platform=uno-q
+```
+
+Accepted values are `uno-q` and `intel-corei7-64`. For example:
+`git commit -m 'Update UNO Q inputs' -m 'platform=uno-q'`.
+The selector is read from the exact commit being assembled, including manual
+workflow runs; for PRs, put it in the final merge commit message. It can be used
+alongside `name-format=` on a separate line. Empty, unknown, or duplicate selectors
+fail before assembly. Only the selected platform's payloads are assembled and
+uploaded; the other platform's OSTree archive is not required.
+
 The pinned composeapps build publishes `led-matrix-anim-app` for the UNO Q
 selection. Its completed archive and app manifest digests have been verified.
 
@@ -71,8 +86,8 @@ or mistake file hashes inside a bundle index for registry blobs. Optional
 OSTree archives come from trusted producer builds and are extracted using
 Python's standard data filter, without custom tar-member validation. Exactly
 one ref under `ostree_repo/refs/heads` and its corresponding commit object are
-required. The resolved OSTree hash is passed explicitly. Both machines are
-assembled and locally checked before either upload starts. Sources are not modified.
+required. The resolved OSTree hash is passed explicitly. All selected machines are
+assembled and locally checked before any upload starts. Sources are not modified.
 
 ## GitHub setup
 

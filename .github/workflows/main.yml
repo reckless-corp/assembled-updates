@@ -36,10 +36,10 @@ jobs:
           exit "$missing"
       - name: Download pinned tools
         run: bash scripts/download-tools.sh
-      - name: Assemble both machines before uploading either
+      - name: Assemble selected platforms before uploading
         run: |
           python3 scripts/assemble.py --archive-root "$ARCHIVE_ROOT" --output out --composectl "$PWD/.tools/bin/composectl"
-      - name: Upload both updates
+      - name: Upload selected updates
         env:
           FIOCLI_CONFIG_ROOT: ${{ runner.temp }}/assembled-fiocli-${{ github.run_id }}-${{ github.run_attempt }}
           UPDATE_SERVER_TOKEN: ${{ secrets.UPDATE_SERVER_TOKEN }}

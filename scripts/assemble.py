@@ -22,6 +22,18 @@ def run(*args):
     return subprocess.check_output(args, text=True).strip()
 
 
+def selected_machines(message):
+    platforms = [line[len("platform="):] for line in message.splitlines()
+                 if line.startswith("platform=")]
+    if len(platforms) > 1:
+        raise ValueError("Commit message must contain at most one platform= line")
+    if not platforms:
+        return list(MACHINES)
+    if platforms[0] not in MACHINES:
+        raise ValueError("platform must be one of: " + ", ".join(MACHINES))
+    return platforms
+
+
 def archive_for(root, repo, sha):
     if not SHA.fullmatch(sha):
         raise ValueError("Expected a full Git SHA")
@@ -126,6 +138,13 @@ def assemble(root, output, composectl):
     output = Path(output).absolute()
     if output.exists():
         raise ValueError(f"Output already exists; choose a fresh directory: {output}")
+    assembled_sha = run("git", "rev-parse", "HEAD")
+    if not SHA.fullmatch(assembled_sha):
+        raise ValueError("Invalid assembled commit")
+    # Read the exact assembled commit as data, never as shell input.
+    message = subprocess.check_output(
+        ["git", "show", "-s", "--format=%B", assembled_sha, "--"], text=True)
+    machines = selected_machines(message)
     pins = {}
     for repo in ("composeapps", "meta-foundries"):
         entry = run("git", "ls-tree", "HEAD", repo).split()
@@ -135,16 +154,14 @@ def assemble(root, output, composectl):
         if run("git", "-C", repo, "rev-parse", "HEAD") != pins[repo]:
             raise ValueError(f"Submodule checkout mismatch: {repo}")
     archives = {repo: archive_for(root, repo, sha) for repo, sha in pins.items()}
-    assembled_sha = run("git", "rev-parse", "HEAD")
-    if not SHA.fullmatch(assembled_sha):
-        raise ValueError("Invalid assembled commit")
     record = {"assembled_commit": assembled_sha, "pins": pins,
               "archives": {k: str(v) for k, v in archives.items()}, "machines": {}}
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".assemble-", dir=output.parent) as temp:
         stage = Path(temp)
         store = archives["composeapps"] / "apps"
-        for machine, (arch, names) in MACHINES.items():
+        for machine in machines:
+            arch, names = MACHINES[machine]
             dest = stage / machine
             dest.mkdir()
             digest = extract_ostree(archives["meta-foundries"] / machine / "ostree_repo.tgz", dest)

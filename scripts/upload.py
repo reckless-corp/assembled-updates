@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 from urllib.parse import urlsplit
 from urllib.request import Request, HTTPRedirectHandler, build_opener
+from assemble import selected_machines
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -32,11 +33,12 @@ def git_output(*args):
     return subprocess.check_output(["git", *args], text=True)
 
 
-def update_names(sha, machines, env):
+def update_names(sha, machines, env, message=None):
     build_num = env.get("GITHUB_RUN_NUMBER", "")
     if not re.fullmatch(r"[1-9][0-9]*", build_num):
         raise ValueError("GITHUB_RUN_NUMBER must be a positive integer")
-    message = git_output("show", "-s", "--format=%B", sha, "--")
+    if message is None:
+        message = git_output("show", "-s", "--format=%B", sha, "--")
     formats = [line[len("name-format="):] for line in message.splitlines()
                if line.startswith("name-format=")]
     if len(formats) > 1:
@@ -104,9 +106,10 @@ def upload(output, fiocli, env=None):
     sha = record["assembled_commit"]
     if not re.fullmatch(r"[0-9a-f]{40}", sha) or sha != env.get("GITHUB_SHA"):
         raise ValueError("Provenance must match GITHUB_SHA")
-    if set(record["machines"]) != set(MACHINE_TAGS):
-        raise ValueError("Both expected machine builds are required")
-    names = update_names(sha, record["machines"], env)
+    message = git_output("show", "-s", "--format=%B", sha, "--")
+    if set(record["machines"]) != set(selected_machines(message)):
+        raise ValueError("Provenance machines must match the commit's platform selection")
+    names = update_names(sha, record["machines"], env, message)
     existing = get_json(url.rstrip("/") + "/v1/updates", token)
     if not isinstance(existing, list):
         raise ValueError("Unexpected updates API response")

@@ -101,7 +101,24 @@ class AssemblyTests(unittest.TestCase):
         self.assertEqual(assemble.MACHINES["uno-q"], ("arm64", ["matrix-app", "led-matrix-anim-app"]))
 
     def test_assembly_uses_local_sources_and_publishes_complete_directory(self):
-        output = self.root / "result"
+        self.check_assembly("Pin builds", list(assemble.MACHINES))
+
+    def test_assembly_only_reads_selected_platform(self):
+        for machine in assemble.MACHINES:
+            with self.subTest(machine=machine):
+                self.check_assembly(f"Pin builds\n\nplatform={machine}\n", [machine])
+
+    def test_commit_platform_selection(self):
+        self.assertEqual(assemble.selected_machines("Pin builds"), list(assemble.MACHINES))
+        self.assertEqual(assemble.selected_machines("Discuss platform=uno-q"), list(assemble.MACHINES))
+        for value in ["", "unknown", "uno-q,intel-corei7-64", " uno-q", "uno-q ", "$(cmd)"]:
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "platform must"):
+                assemble.selected_machines("platform=" + value)
+        with self.assertRaisesRegex(ValueError, "at most one"):
+            assemble.selected_machines("platform=uno-q\nplatform=uno-q")
+
+    def check_assembly(self, message, machines):
+        output = self.root / ("result-" + "-".join(machines))
         sha = "a" * 40
         def fake_run(*args):
             if args[:2] == ("git", "ls-tree"):
@@ -119,8 +136,9 @@ class AssemblyTests(unittest.TestCase):
             self.assertEqual(cmd[cmd.index("-l") + 1], str(self.root / "composeapps" / "apps"))
             calls.append(cmd)
         with patch("assemble.run", side_effect=fake_run), \
+             patch("assemble.subprocess.check_output", return_value=message) as git, \
              patch("assemble.archive_for", side_effect=lambda root, repo, sha: self.root / repo), \
-             patch("assemble.extract_ostree", return_value="b" * 64), \
+             patch("assemble.extract_ostree", return_value="b" * 64) as extract, \
              patch("assemble.apps_for", side_effect=fake_apps), \
              patch("assemble.preserve_archive_blobs") as preserve, \
              patch("assemble.check_app_registry_blobs") as registry_check, \
@@ -129,8 +147,37 @@ class AssemblyTests(unittest.TestCase):
         self.assertEqual(preserve.call_count, 2)
         self.assertEqual(registry_check.call_count, 2)
         self.assertTrue((output / "provenance.json").is_file())
-        self.assertEqual(set(record["machines"]), set(assemble.MACHINES))
-        self.assertEqual([cmd[cmd.index("-a") + 1] for cmd in calls], ["amd64", "arm64"])
+        git.assert_called_once_with(["git", "show", "-s", "--format=%B", sha, "--"], text=True)
+        self.assertEqual(set(record["machines"]), set(machines))
+        self.assertEqual([cmd[cmd.index("-a") + 1] for cmd in calls],
+                         [assemble.MACHINES[m][0] for m in machines])
+        self.assertEqual([call.args[0] for call in extract.call_args_list],
+                         [self.root / "meta-foundries" / m / "ostree_repo.tgz" for m in machines])
+        self.assertEqual({p.name for p in output.iterdir()}, {*machines, "provenance.json"})
+
+    def test_single_platform_upload_and_provenance_validation(self):
+        cases = [(f"platform={m}", [m], True) for m in assemble.MACHINES]
+        cases += [("", ["uno-q"], False), ("platform=uno-q", list(assemble.MACHINES), False),
+                  ("platform=uno-q", ["intel-corei7-64"], False),
+                  ("platform=unknown", ["uno-q"], False), ("platform=uno-q", [], False)]
+        for message, machines, valid in cases:
+            with self.subTest(message=message, machines=machines):
+                record = {"assembled_commit": "a" * 40, "machines": {
+                    m: {"ostree_sha256": "b" * 64, "apps": {}} for m in machines}}
+                (self.root / "provenance.json").write_text(json.dumps(record))
+                with patch("upload.git_output", side_effect=[message, "aaaaaaa"]), \
+                     patch("upload.get_json", return_value=[]) as get, \
+                     patch("upload.subprocess.run") as run:
+                    if valid:
+                        upload.upload(self.root, "fiocli", self.upload_env())
+                        run.assert_called_once()
+                        cmd = run.call_args.args[0]
+                        self.assertEqual(cmd[cmd.index("--hardware-id") + 1], machines[0])
+                    else:
+                        with self.assertRaises(ValueError):
+                            upload.upload(self.root, "fiocli", self.upload_env())
+                        get.assert_not_called()
+                        run.assert_not_called()
 
     def upload_env(self):
         return {"UPDATE_SERVER_URL": "https://updates.example.test",
