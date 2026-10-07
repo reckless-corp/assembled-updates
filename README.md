@@ -70,25 +70,44 @@ assembled and locally checked before either upload starts. Sources are not modif
    secrets. Do not put credentials in this public repository.
 4. Enable server-side TUF signing on the destination. These input archives have
    no pre-signed `tuf/` directory, so the server must generate signed metadata.
-5. Protect `main` with reviewed pull requests and required hosted `Test` checks.
-   Restrict the environment to `main`; add required reviewers if desired. Keep
+5. Restrict the environment to `main`; add required reviewers if desired. Keep
    this public repository's self-hosted runner isolated from other workloads.
+   If you prefer a PR workflow, protect `main` with required hosted `Test` checks.
 
 Only a push to `main`, or manual dispatch selecting `main`, can use the publishing
 runner. Pull requests validate every workflow with actionlint, run unit tests,
 and smoke-test the pinned CLIs on GitHub-hosted Ubuntu. They receive no
-publishing secret or NFS access. A merge produces a push and starts assembly.
-Direct pushes to main also trigger it, so enforce branch protection if all
-publishing changes must be merged PRs. Workflows currently use major-version
+publishing secret or NFS access. Both direct pushes to `main` and PR merges start assembly. For the usual
+manual workflow, prepare one commit locally and push it directly to `main`. Run
+the local checks first because PR CI does not run on a direct push. Workflows currently use major-version
 GitHub Action references; pin them to reviewed full SHAs for stricter supply-chain
 control.
 
 ## Version and provenance
 
 The server automatically assigns each update's numeric version; the workflow
-does not pass `--version`. Update and target names use `<machine>-<full-sha>`,
-where the SHA identifies the assembled repository commit. Both machines refer
-to the same assembled commit, but their server-assigned versions may differ.
+does not pass `--version`. Update and TUF target names default to
+`{{BUILD_NUM}}_{{GITHASH}}_{{MACHINE}}`, for example `73_a1b2c3d_uno-q`.
+`BUILD_NUM` is GitHub's workflow run number, `GITHASH` is Git's short hash of the
+assembled repository commit, and `MACHINE` is `uno-q` or `intel-corei7-64`.
+Both machines refer to the same assembled commit, but their server-assigned
+versions may differ.
+
+To customize the names, add one standalone line to the message of the commit
+you push to `main`:
+
+```
+name-format=text-from-user-{{GITHASH}}-{{MACHINE}}-{{BUILD_NUM}}
+```
+
+The line is read directly from that exact assembled commit, not a PR description
+or submodule commits. If using a PR instead, put it in the final merge commit
+message. Only those three placeholders are supported. Rendered names
+must start with a letter or digit and contain only letters, digits, underscores,
+dots, and hyphens. Both machine names must be distinct, so include `{{MACHINE}}`.
+Duplicate format lines, unknown placeholders, and invalid names fail before any
+server request or upload. Each fiocli upload has its own collapsible GitHub Actions
+log group, labeled with the machine and rendered name, including on failure.
 
 `out/provenance.json` records the assembled commit, exact submodule commits,
 archive paths, app digests, architecture, and OSTree hash. The assembler prints this JSON
@@ -96,14 +115,16 @@ to the workflow log, and CI saves the file as an artifact. Full payloads remain 
 they are uploaded directly to the server rather than GitHub artifacts.
 
 Uploads are sequential, not transactional. If the first succeeds and the second
-fails, the first remains on the server. Re-running or manually dispatching the
-same assembled commit reuses its update names and resumes safely: an existing
+fails, the first remains on the server. Re-running the same GitHub Actions run
+keeps its run number and update names and resumes safely. A new manual dispatch
+gets a new run number and therefore new default names. Custom formats that omit
+`{{BUILD_NUM}}` can reuse names across runs. An existing
 update is skipped only after checking its tag, TUF target identity (including
 its server-assigned version), hardware ID, OSTree hash, and complete app digest
 map. Read permission for `/v1/updates` and update TUF metadata is therefore also
 required. Mismatches and unexpected API failures stop the run; there is no
-automatic delete or blind overwrite. A new assembled commit produces new update
-names. This workflow does not automatically roll back or deploy to devices.
+automatic delete or blind overwrite. Names are determined by the format, commit,
+and run number. This workflow does not automatically roll back or deploy to devices.
 
 The fiocli token is provided only to the upload step, written to a temporary
 mode-0600 JSON config, omitted from command arguments and child environment, and
@@ -120,11 +141,13 @@ git -C composeapps checkout <reviewed-full-sha>
 git -C meta-foundries fetch origin
 git -C meta-foundries checkout <reviewed-full-sha>
 git add composeapps meta-foundries
-git commit -m 'Pin input builds'
+git commit -m 'Pin input builds' -m 'name-format=release-{{BUILD_NUM}}-{{GITHASH}}-{{MACHINE}}'
+git push origin main
 ```
 
-Confirm both producer workflows finished and the numbered NFS directories exist
-before merging. Initial successful upstream runs do not prove that their NFS
+The second `-m` adds the optional name format to the commit body; omit it to use
+the default. Confirm both producer workflows finished and the numbered NFS
+directories exist before pushing. Initial successful upstream runs do not prove that their NFS
 archives are still present. Review machine/app mapping when producer apps change.
 
 ## Local checks
@@ -137,7 +160,9 @@ python3 scripts/assemble.py --archive-root /path/to/archive --output out --compo
 
 `out` must not already exist. The assembler requires initialized submodules and
 runs from the repository root. Upload configuration is read from the environment;
-local upload additionally requires `GITHUB_SHA` matching provenance. Treat a
+local upload additionally requires `GITHUB_SHA` matching provenance and a positive
+`GITHUB_RUN_NUMBER`. Run it from the assembled repository checkout so Git can read
+the recorded commit message and resolve its short hash. Treat a
 local upload as a real server mutation.
 
 Official Linux amd64 release binaries and their published SHA256 checksums are
@@ -153,8 +178,8 @@ Linux x86_64, curl, sha256sum, and tar; it does not require Go, ShellCheck, or P
 
 PR CI downloads, verifies, and smoke-tests both CLIs without NFS or server
 credentials. Neither workflow builds the tools or needs Go or Git LFS.
-Unit tests run only in PR CI; the publishing workflow relies on reviewed,
-verified changes in `main`. Update the release URLs and checksums together in
+Unit tests run only in PR CI; run the local checks before pushing directly to
+`main`. The publishing workflow does not run them. Update the release URLs and checksums together in
 the shared script when upgrading.
 
 Unit tests exercise archive selection, app identity and digest checks, trusted
