@@ -140,6 +140,7 @@ def upload(output, fiocli, env=None):
                    "--name", name, "--ostree-hash", data["ostree_sha256"]]
             for app, info in sorted(data["apps"].items()):
                 cmd.extend(["--apps", f"{app}={info['sha256']}"])
+            print("Running:", cmd)
             print(f"::group::Upload {machine}: {name}", flush=True)
             try:
                 subprocess.run(cmd, check=True, env=child_env)
