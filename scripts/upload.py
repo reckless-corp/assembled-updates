@@ -22,6 +22,7 @@ def get_json(url, token):
         return json.load(response)
 
 
+MACHINE_TAGS = {"intel-corei7-64": "reckless-corp", "uno-q": "uno-q"}
 DEFAULT_NAME_FORMAT = "{{BUILD_NUM}}_{{GITHASH}}_{{MACHINE}}"
 
 
@@ -89,24 +90,21 @@ def settings(env):
     if (parsed.scheme != "https" or not parsed.hostname or parsed.username
             or parsed.password or parsed.query or parsed.fragment):
         raise ValueError("UPDATE_SERVER_URL must be an HTTPS URL without credentials, query or fragment")
-    tag = env.get("UPDATE_TAG", "")
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", tag):
-        raise ValueError("UPDATE_TAG must be a nonempty safe path component")
     token = env.get("UPDATE_SERVER_TOKEN", "")
     if not token:
         raise ValueError("UPDATE_SERVER_TOKEN is required")
-    return url.rstrip("/"), tag, token
+    return url.rstrip("/"), token
 
 
 def upload(output, fiocli, env=None):
     env = dict(os.environ if env is None else env)
-    url, tag, token = settings(env)
+    url, token = settings(env)
     output = Path(output).absolute()
     record = json.loads((output / "provenance.json").read_text())
     sha = record["assembled_commit"]
     if not re.fullmatch(r"[0-9a-f]{40}", sha) or sha != env.get("GITHUB_SHA"):
         raise ValueError("Provenance must match GITHUB_SHA")
-    if set(record["machines"]) != {"intel-corei7-64", "uno-q"}:
+    if set(record["machines"]) != set(MACHINE_TAGS):
         raise ValueError("Both expected machine builds are required")
     names = update_names(sha, record["machines"], env)
     existing = get_json(url.rstrip("/") + "/v1/updates", token)
@@ -125,6 +123,7 @@ def upload(output, fiocli, env=None):
         child_env.pop("UPDATE_SERVER_TOKEN", None)
         for machine, data in record["machines"].items():
             name = names[machine]
+            tag = MACHINE_TAGS[machine]
             matches = [item for item in existing if item["name"] == name]
             if matches:
                 if len(matches) != 1 or matches[0]["tag"] != tag:

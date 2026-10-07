@@ -18,7 +18,6 @@ jobs:
       ARCHIVE_ROOT: /var/code/reckless-corp/storage/archive
       # Non-empty variables take precedence over secrets with the same name.
       UPDATE_SERVER_URL: ${{ vars.UPDATE_SERVER_URL || secrets.UPDATE_SERVER_URL }}
-      UPDATE_TAG: ${{ vars.UPDATE_TAG || secrets.UPDATE_TAG }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -32,10 +31,6 @@ jobs:
           missing=0
           if [ -z "$UPDATE_SERVER_URL" ]; then
             echo "::error::Missing UPDATE_SERVER_URL: set a repository or update-server environment variable or secret."
-            missing=1
-          fi
-          if [ -z "$UPDATE_TAG" ]; then
-            echo "::error::Missing UPDATE_TAG: set a repository or update-server environment variable or secret."
             missing=1
           fi
           exit "$missing"
