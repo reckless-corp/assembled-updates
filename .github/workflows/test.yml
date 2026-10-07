@@ -30,9 +30,14 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
       - name: Download and smoke-test pinned CLIs
         run: |
           bash scripts/download-tools.sh
           .tools/bin/fiocli updates upload --help
           .tools/bin/composectl pull --help
           .tools/bin/composectl check --help
+      - name: Reproduce local-provider omission and verify offline registry payload
+        run: python3 -m unittest discover -s tests -p 'test_blob_preservation.py' -v

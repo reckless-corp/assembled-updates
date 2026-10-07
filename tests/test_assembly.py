@@ -122,8 +122,12 @@ class AssemblyTests(unittest.TestCase):
              patch("assemble.archive_for", side_effect=lambda root, repo, sha: self.root / repo), \
              patch("assemble.extract_ostree", return_value="b" * 64), \
              patch("assemble.apps_for", side_effect=fake_apps), \
+             patch("assemble.preserve_archive_blobs") as preserve, \
+             patch("assemble.check_app_registry_blobs") as registry_check, \
              patch("assemble.subprocess.run", side_effect=fake_pull):
             record = assemble.assemble(self.root, output, "composectl")
+        self.assertEqual(preserve.call_count, 2)
+        self.assertEqual(registry_check.call_count, 2)
         self.assertTrue((output / "provenance.json").is_file())
         self.assertEqual(set(record["machines"]), set(assemble.MACHINES))
         self.assertEqual([cmd[cmd.index("-a") + 1] for cmd in calls], ["amd64", "arm64"])
