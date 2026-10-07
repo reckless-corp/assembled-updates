@@ -60,11 +60,14 @@ assembled and locally checked before either upload starts. Sources are not modif
    read-only access to the NFS archive. It needs network access for submodule
    checkouts, pinned GitHub release downloads, GitHub Actions, and the update server. Assembly
    itself obtains all application and OS payloads from NFS.
-2. Create GitHub environment `update-server`. Set these environment variables:
+2. Create GitHub environment `update-server`. Set these as repository-level or
+   `update-server` environment variables or secrets:
    - `UPDATE_SERVER_URL`: HTTPS base URL of the server
    - `UPDATE_TAG`: the desired update tag (for example `main`)
-3. Add environment secret `UPDATE_SERVER_TOKEN` with upload permission for the
-   intended server. Do not put credentials in this public repository.
+   A non-empty variable takes precedence over a secret with the same name.
+3. Add repository-level or `update-server` environment secret `UPDATE_SERVER_TOKEN`
+   with upload permission for the intended server. This token is read only from
+   secrets. Do not put credentials in this public repository.
 4. Enable server-side TUF signing on the destination. These input archives have
    no pre-signed `tuf/` directory, so the server must generate signed metadata.
 5. Protect `main` with reviewed pull requests and required hosted `Test` checks.
