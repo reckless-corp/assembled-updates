@@ -58,7 +58,7 @@ class AssemblyTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             assemble.apps_for(self.root, ["matrix-app"])
         with self.assertRaises(ValueError):
-            assemble.apps_for(self.root, ["uno-q-hat-app"])
+            assemble.apps_for(self.root, ["led-matrix-anim-app"])
 
     def make_tar(self, entries):
         path = self.root / "ostree.tgz"
@@ -98,7 +98,7 @@ class AssemblyTests(unittest.TestCase):
 
     def test_machine_selection(self):
         self.assertEqual(assemble.MACHINES["intel-corei7-64"], ("amd64", ["matrix-app"]))
-        self.assertEqual(assemble.MACHINES["uno-q"], ("arm64", ["matrix-app", "uno-q-hat-app"]))
+        self.assertEqual(assemble.MACHINES["uno-q"], ("arm64", ["matrix-app", "led-matrix-anim-app"]))
 
     def test_assembly_uses_local_sources_and_publishes_complete_directory(self):
         output = self.root / "result"

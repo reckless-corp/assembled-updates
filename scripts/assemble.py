@@ -11,7 +11,7 @@ import tempfile
 
 MACHINES = {
     "intel-corei7-64": ("amd64", ["matrix-app"]),
-    "uno-q": ("arm64", ["matrix-app", "uno-q-hat-app"]),
+    "uno-q": ("arm64", ["matrix-app", "led-matrix-anim-app"]),
 }
 SHA = re.compile(r"[0-9a-f]{40}")
 DIGEST = re.compile(r"[0-9a-f]{64}")

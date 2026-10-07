@@ -6,11 +6,11 @@ rebuild Yocto or containers and does not assign updates or start device rollouts
 
 ## Inputs
 
-The Git submodule entries are the source of truth. Initial pins:
+The Git submodule entries are the source of truth. Current pins:
 
 | Submodule | Commit | Successful producer run |
 | --- | --- | --- |
-| composeapps | `e4cc5317d47e172b610ced0a23c53665b9faf8a7` | 2 |
+| composeapps | `12c3f49eedd9b9bd0bcc0c46b17e4598a1656c0a` | 3 |
 | meta-foundries | `86ceaf3bc8c9c038ac5e47575045fe9ec1d507b1` | 24 |
 
 The runner must have read access to the NFS archive mounted at
@@ -24,7 +24,7 @@ meta-foundries/<run-number>_<full-submodule-sha>/<machine>/ostree_repo.tgz
 The unnumbered SHA directory is an unfinished producer build and is ignored.
 Exactly one numbered archive must match each pin. Missing or ambiguous matches
 fail the build; there is no fallback to newest, another commit, or a registry.
-The initial expected prefixes are `2_` and `24_`; archive presence still must be
+The expected prefixes are `3_` and `24_`; archive presence still must be
 verified on the NFS-equipped runner. If an upstream rerun creates multiple
 archives for the same SHA, resolve that ambiguity before assembling.
 
@@ -33,7 +33,10 @@ archives for the same SHA, resolve that ambiguity before assembling.
 | Hardware ID | Architecture | Compose apps | Update tag |
 | --- | --- | --- | --- |
 | intel-corei7-64 | amd64 | matrix-app | reckless-corp |
-| uno-q | arm64 | matrix-app, uno-q-hat-app | uno-q |
+| uno-q | arm64 | matrix-app, led-matrix-anim-app | uno-q |
+
+The pinned composeapps build publishes `led-matrix-anim-app` for the UNO Q
+selection. Its completed archive and app manifest digests have been verified.
 
 Names and digests are verified from the archive's
 `apps/apps/<app-name>/<sha256>/{uri,manifest.json}`. Each selected app must have
