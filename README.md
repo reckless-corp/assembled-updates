@@ -50,6 +50,24 @@ regenerates per-image indexes for the requested architecture. Copying the
 producer's shared store is unsafe here: its amd64-first pull can leave existing
 image indexes unchanged when arm64 is pulled afterward.
 
+After the fresh pull, assembly copies every archived `blobs/sha256` file missing
+from the new store, then verifies the SHA256 of every assembled blob. This
+intentionally retains a superset (including other apps/platforms) rather than
+risk pruning payload the update-server registry must serve. Only immutable blobs
+are copied, never the producer's per-image `index.json` files or app selection.
+This increases payload size but leaves sources untouched and keeps rebuilt
+machine-specific indexes.
+
+This is required by composectl v96.3.0: its local source provider does not
+implement `Info`, so local pulls omit the app bundle index referenced by
+`org.foundries.app.bundle.index.digest`, even when it is archived. A local check
+can also pass without it, whereas a device pulling from the registry requests
+it. Assembly explicitly checks app bundles and annotated bundle indexes in
+`blobs/sha256`, alongside composectl's selected-platform image/config/layer check.
+It does not require unfetched platforms or attestations from a multiarch index,
+or mistake file hashes inside a bundle index for registry blobs. Optional
+`layers-meta` payload remains optional.
+
 OSTree archives come from trusted producer builds and are extracted using
 Python's standard data filter, without custom tar-member validation. Exactly
 one ref under `ostree_repo/refs/heads` and its corresponding commit object are
@@ -128,6 +146,12 @@ required. Mismatches and unexpected API failures stop the run; there is no
 automatic delete or blind overwrite. Names are determined by the format, commit,
 and run number. This workflow does not automatically roll back or deploy to devices.
 
+To repair an already-published payload with missing blobs, assemble this fix and
+upload under a **fresh update name** (a new run number with the default format).
+Resume skips an existing name whose TUF metadata matches; it does not repair its
+blob payload. A custom name format must also produce a new name. This change
+does not delete or overwrite existing server updates or assign devices.
+
 The fiocli token is provided only to the upload step, written to a temporary
 mode-0600 JSON config, omitted from command arguments and child environment, and
 removed on normal success or exceptions. An `always()` workflow step also removes
@@ -156,6 +180,7 @@ archives are still present. Review machine/app mapping when producer apps change
 
 ```
 bash scripts/lint-workflows.sh
+bash scripts/download-tools.sh  # enables the real composectl offline regression
 python3 -m unittest discover -s tests -v
 python3 scripts/assemble.py --archive-root /path/to/archive --output out --composectl /path/to/composectl
 ```
@@ -189,3 +214,10 @@ tar extraction, OSTree selection, machine mapping, configuration validation,
 provenance logging, exact upload arguments, server-assigned version resume
 checks, and credential cleanup. Real NFS assembly and server upload require
 the configured runner and are not covered by these fixture tests.
+
+The tools CI job runs an offline regression with the pinned composectl binary.
+Its generated multiarch archive reproduces the missing annotated app index and
+false-success local check, then verifies blob preservation, per-machine indexes,
+selected image manifests/configs/layers, and unchanged source bytes. Ordinary
+unit runs skip only this binary test when `.tools/bin/composectl` is absent.
+These fixtures do not validate the private NFS archives or a live device pull.

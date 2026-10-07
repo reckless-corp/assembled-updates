@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tarfile
 import tempfile
@@ -58,6 +59,53 @@ def apps_for(store, names):
     return result
 
 
+def preserve_archive_blobs(source, destination):
+    """Keep immutable payloads without copying stale per-machine index files."""
+    source = Path(source) / "blobs" / "sha256"
+    destination = Path(destination) / "blobs" / "sha256"
+    if source.is_symlink() or not source.is_dir():
+        raise ValueError(f"Missing archive blob directory: {source}")
+    destination.mkdir(parents=True, exist_ok=True)
+    for blob in source.iterdir():
+        if blob.is_symlink() or not blob.is_file() or not DIGEST.fullmatch(blob.name):
+            raise ValueError(f"Invalid archived blob: {blob}")
+        target = destination / blob.name
+        if not target.exists():
+            # Copy rather than link to the read-only archive. Only immutable
+            # blobs are retained; never overlay apps/**/images/**/index.json.
+            shutil.copyfile(blob, target)
+    for blob in destination.iterdir():
+        if blob.is_symlink() or not blob.is_file() or not DIGEST.fullmatch(blob.name):
+            raise ValueError(f"Invalid assembled blob: {blob}")
+        with blob.open("rb") as stream:
+            if hashlib.file_digest(stream, "sha256").hexdigest() != blob.name:
+                raise ValueError(f"Assembled blob digest mismatch: {blob}")
+
+
+def check_app_registry_blobs(store, apps):
+    """Check references that composectl's local check can silently omit."""
+    blobs = Path(store) / "blobs" / "sha256"
+    for app in apps.values():
+        manifest = json.loads((blobs / app["sha256"]).read_bytes())
+        # Only the bundle is required; layers-meta is optional even remotely.
+        layer = manifest["layers"][0]
+        digest = layer["digest"]
+        if not digest.startswith("sha256:") or not DIGEST.fullmatch(digest[7:]):
+            raise ValueError(f"Invalid app layer digest: {digest}")
+        path = blobs / digest[7:]
+        if not path.is_file() or path.stat().st_size != layer["size"]:
+            raise ValueError(f"Missing or wrong-size app layer: {path}")
+        annotations = layer.get("annotations", {})
+        index = annotations.get("org.foundries.app.bundle.index.digest")
+        if index is not None:
+            if not index.startswith("sha256:") or not DIGEST.fullmatch(index[7:]):
+                raise ValueError(f"Invalid app bundle index digest: {index}")
+            path = blobs / index[7:]
+            size = int(annotations["org.foundries.app.bundle.index.size"])
+            if not path.is_file() or path.stat().st_size != size:
+                raise ValueError(f"Missing or wrong-size app bundle index: {path}")
+
+
 def extract_ostree(archive, destination):
     with tarfile.open(archive, "r:gz") as tf:
         # Archives are produced by our trusted, pinned build workflows.
@@ -107,6 +155,11 @@ def assemble(root, output, composectl):
             subprocess.run([composectl, "pull", "-l", str(store), "-s", str(dest / "apps"),
                             "-i", str(dest / "apps"), "-a", arch,
                             *[v["uri"] for v in apps.values()]], check=True)
+            # The local provider skips the annotated bundle index even when
+            # archived. The registry serves blobs/sha256 directly, so retain
+            # the archive's immutable blob superset after rebuilding indexes.
+            preserve_archive_blobs(store, dest / "apps")
+            check_app_registry_blobs(dest / "apps", apps)
             if apps_for(dest / "apps", names) != apps:
                 raise ValueError("Assembled app metadata differs from source")
             check = json.loads(run(composectl, "check", "--local", "--format", "json",
