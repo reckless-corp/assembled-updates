@@ -89,6 +89,45 @@ one ref under `ostree_repo/refs/heads` and its corresponding commit object are
 required. The resolved OSTree hash is passed explicitly. All selected machines are
 assembled and locally checked before any upload starts. Sources are not modified.
 
+## OSTree static deltas
+
+To include deltas from older OS builds, add one standalone line per base to the
+assembled commit message (including the final merge commit for PRs):
+
+```text
+platform=uno-q
+ostree-from=<full-meta-foundries-Git-SHA-of-previous-build>
+ostree-from=<full-meta-foundries-Git-SHA-of-older-build>
+```
+
+Replace each placeholder with a full, lowercase, 40-character **meta-foundries
+Git commit**, not an assembled-updates Git commit or a 64-character OSTree hash.
+Each value resolves through the same unique completed NFS archive lookup as
+the current pin. For each selected platform, assembly reads that archive's
+`<machine>/ostree_repo.tgz` and resolves its OSTree checksum. Only selected
+platforms are required in the base archives. Missing or ambiguous archives,
+invalid values, or delta-generation errors fail assembly before any upload.
+
+Repeated lines support devices on multiple older releases. Duplicate values
+are deduplicated; different builds yielding the same OSTree checksum generate
+only one delta. A base equal to the target is recorded as `same-as-target` and
+needs no delta. With no `ostree-from=` lines, assembly behaves as before.
+
+The runner needs `ostree` on PATH (Debian/Ubuntu package: `ostree`) and temporary
+disk space for the target and base repositories. Assembly generates one
+`static-delta generate --from=<base> --to=<target> --min-fallback-size=0` per
+distinct base, using only archived objects. It copies the resulting `deltas/`
+into the uploaded target repository and refreshes its summary, following
+[OSTree repository management](https://ostreedev.github.io/ostree/repository-management/).
+Older objects and refs stay in temporary storage, and source archives remain
+unchanged. The target's ordinary objects remain available for devices without
+a matching delta. Each machine's `static_deltas` provenance records the source
+Git commit, archive path, resolved from/to checksums, and generation status.
+
+Integration tests generate two deltas and apply each in a fresh repository
+containing only its base. Live update-server delivery and device selection of
+these deltas still require validation on the configured deployment.
+
 ## GitHub setup
 
 1. Provide an isolated, trusted Linux x64 self-hosted runner with labels

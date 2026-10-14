@@ -103,6 +103,10 @@ class AssemblyTests(unittest.TestCase):
     def test_assembly_uses_local_sources_and_publishes_complete_directory(self):
         self.check_assembly("Pin builds", list(assemble.MACHINES))
 
+    def test_assembly_wires_multiple_delta_sources(self):
+        self.check_assembly("Pin builds\nostree-from=" + "c" * 40 +
+                            "\nostree-from=" + "d" * 40, list(assemble.MACHINES))
+
     def test_assembly_only_reads_selected_platform(self):
         for machine in assemble.MACHINES:
             with self.subTest(machine=machine):
@@ -139,16 +143,28 @@ class AssemblyTests(unittest.TestCase):
              patch("assemble.subprocess.check_output", return_value=message) as git, \
              patch("assemble.archive_for", side_effect=lambda root, repo, sha: self.root / repo), \
              patch("assemble.extract_ostree", return_value="b" * 64) as extract, \
+             patch("assemble.generate_deltas", return_value=[{"status": "generated"}]) as deltas, \
              patch("assemble.apps_for", side_effect=fake_apps), \
              patch("assemble.preserve_archive_blobs") as preserve, \
              patch("assemble.check_app_registry_blobs") as registry_check, \
              patch("assemble.subprocess.run", side_effect=fake_pull):
             record = assemble.assemble(self.root, output, "composectl")
-        self.assertEqual(preserve.call_count, 2)
-        self.assertEqual(registry_check.call_count, 2)
+        self.assertEqual(preserve.call_count, len(machines))
+        self.assertEqual(registry_check.call_count, len(machines))
         self.assertTrue((output / "provenance.json").is_file())
         git.assert_called_once_with(["git", "show", "-s", "--format=%B", sha, "--"], text=True)
         self.assertEqual(set(record["machines"]), set(machines))
+        expected_sources = {sha: self.root / "meta-foundries"
+                            for sha in assemble.delta_sources(message)}
+        self.assertEqual(deltas.call_count, len(machines))
+        for call, machine in zip(deltas.call_args_list, machines):
+            self.assertEqual(call.args[0].parts[-2:], (machine, "ostree_repo"))
+            self.assertEqual(call.args[1:], ("b" * 64, machine, expected_sources))
+            if expected_sources:
+                self.assertEqual(record["machines"][machine]["static_deltas"],
+                                 [{"status": "generated"}])
+            else:
+                self.assertNotIn("static_deltas", record["machines"][machine])
         self.assertEqual([cmd[cmd.index("-a") + 1] for cmd in calls],
                          [assemble.MACHINES[m][0] for m in machines])
         self.assertEqual([call.args[0] for call in extract.call_args_list],

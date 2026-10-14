@@ -45,6 +45,50 @@ def archive_for(root, repo, sha):
     return matches[0]
 
 
+def delta_sources(message):
+    sources = []
+    for line in message.splitlines():
+        if not line.startswith("ostree-from="):
+            continue
+        sha = line[len("ostree-from="):]
+        if not SHA.fullmatch(sha):
+            raise ValueError("ostree-from must be a full lowercase meta-foundries Git SHA")
+        if sha not in sources:
+            sources.append(sha)
+    return sources
+
+
+def generate_deltas(repo, target, machine, sources):
+    """Generate using temporary base objects; publish only deltas and summary."""
+    if not sources:
+        return []
+    if not shutil.which("ostree"):
+        raise ValueError("Static delta generation requires ostree on PATH")
+    records = []
+    generated = set()
+    with tempfile.TemporaryDirectory(prefix=".deltas-", dir=repo.parent.parent) as temp:
+        work = Path(temp)
+        build = work / "repo"
+        run("ostree", f"--repo={build}", "init", "--mode=archive")
+        run("ostree", f"--repo={build}", "pull-local", str(repo), target)
+        for sha, archive in sources.items():
+            with tempfile.TemporaryDirectory(dir=work) as extracted:
+                base = extract_ostree(archive / machine / "ostree_repo.tgz", extracted)
+                status = "same-as-target" if base == target else "generated"
+                if base != target and base not in generated:
+                    run("ostree", f"--repo={build}", "pull-local",
+                        str(Path(extracted) / "ostree_repo"), base)
+                    run("ostree", f"--repo={build}", "static-delta", "generate",
+                        f"--from={base}", f"--to={target}", "--min-fallback-size=0")
+                    generated.add(base)
+                records.append({"meta_foundries_commit": sha, "archive": str(archive),
+                                "from": base, "to": target, "status": status})
+        if generated:
+            shutil.copytree(build / "deltas", repo / "deltas", dirs_exist_ok=True)
+        run("ostree", f"--repo={repo}", "summary", "--update")
+    return records
+
+
 def apps_for(store, names):
     result = {}
     for name in names:
@@ -145,6 +189,7 @@ def assemble(root, output, composectl):
     message = subprocess.check_output(
         ["git", "show", "-s", "--format=%B", assembled_sha, "--"], text=True)
     machines = selected_machines(message)
+    bases = delta_sources(message)
     pins = {}
     for repo in ("composeapps", "meta-foundries"):
         entry = run("git", "ls-tree", "HEAD", repo).split()
@@ -154,6 +199,7 @@ def assemble(root, output, composectl):
         if run("git", "-C", repo, "rev-parse", "HEAD") != pins[repo]:
             raise ValueError(f"Submodule checkout mismatch: {repo}")
     archives = {repo: archive_for(root, repo, sha) for repo, sha in pins.items()}
+    sources = {sha: archive_for(root, "meta-foundries", sha) for sha in bases}
     record = {"assembled_commit": assembled_sha, "pins": pins,
               "archives": {k: str(v) for k, v in archives.items()}, "machines": {}}
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -165,6 +211,7 @@ def assemble(root, output, composectl):
             dest = stage / machine
             dest.mkdir()
             digest = extract_ostree(archives["meta-foundries"] / machine / "ostree_repo.tgz", dest)
+            deltas = generate_deltas(dest / "ostree_repo", digest, machine, sources)
             apps = apps_for(store, names)
             # -l uses a local blob provider with no remote fallback. A fresh store
             # regenerates correct per-architecture indexes rather than copying
@@ -190,6 +237,8 @@ def assemble(root, output, composectl):
                 if path.is_symlink() or not (path.is_file() or path.is_dir()):
                     raise ValueError(f"Unsupported assembled filesystem entry: {path}")
             record["machines"][machine] = {"architecture": arch, "ostree_sha256": digest, "apps": apps}
+            if sources:
+                record["machines"][machine]["static_deltas"] = deltas
         (stage / "provenance.json").write_text(json.dumps(record, indent=2) + "\n")
         # Rename the completed directory; do not mutate either source archive.
         stage.rename(output)
