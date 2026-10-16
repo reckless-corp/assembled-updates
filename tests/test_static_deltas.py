@@ -13,15 +13,39 @@ import assemble
 
 class DeltaMetadataTests(unittest.TestCase):
     def test_multiple_sources_and_duplicates(self):
-        a, b = "a" * 40, "b" * 40
-        message = f"Update\nplatform=uno-q\nostree-from={a}\nostree-from={b}\nostree-from={a}"
+        a, b = "24_" + "a" * 40, "25_" + "a" * 40
+        message = f"Update\nplatform=uno-q\nmeta-foundries-from={a}\nmeta-foundries-from={b}\nmeta-foundries-from={a}"
         self.assertEqual(assemble.delta_sources(message), [a, b])
-        self.assertEqual(assemble.delta_sources("Discuss ostree-from=abc"), [])
+        self.assertEqual(assemble.delta_sources("Discuss meta-foundries-from=abc"), [])
 
     def test_invalid_sources(self):
-        for value in ["", "abc", "a" * 64, "A" * 40, "a" * 40 + " ", "$(cmd)"]:
+        for value in ["", "abc", "a" * 64, "A" * 40, "a" * 40 + " ", "$(cmd)", "a" * 40, "0_" + "a" * 40,
+                      "24_" + "A" * 40, "24_" + "a" * 40 + " ",
+                      "../24_" + "a" * 40, "/24_" + "a" * 40]:
             with self.subTest(value=value), self.assertRaises(ValueError):
-                assemble.delta_sources("ostree-from=" + value)
+                assemble.delta_sources("meta-foundries-from=" + value)
+
+    def test_old_parameter_reports_migration(self):
+        with self.assertRaisesRegex(ValueError, "Replace ostree-from"):
+            assemble.delta_sources("ostree-from=" + "a" * 40)
+
+    def test_exact_archive_selection(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            names = ["24_" + "a" * 40, "25_" + "a" * 40]
+            for name in names:
+                (root / "meta-foundries" / name).mkdir(parents=True)
+            for name in names:
+                self.assertEqual(assemble.delta_archive(root, name),
+                                 root / "meta-foundries" / name)
+            with self.assertRaisesRegex(ValueError, "Missing completed"):
+                assemble.delta_archive(root, "26_" + "a" * 40)
+            link = root / "meta-foundries" / ("27_" + "a" * 40)
+            link.symlink_to(root / "meta-foundries" / names[0])
+            with self.assertRaisesRegex(ValueError, "Missing completed"):
+                assemble.delta_archive(root, link.name)
+            with self.assertRaisesRegex(ValueError, "Invalid"):
+                assemble.delta_archive(root, "../" + names[0])
 
 
 @unittest.skipUnless(shutil.which("ostree"), "ostree is not installed")
@@ -47,7 +71,7 @@ class DeltaIntegrationTests(unittest.TestCase):
                 archive.parent.mkdir()
                 with tarfile.open(archive, "w:gz") as tf:
                     tf.add(repo, arcname="ostree_repo")
-                self.sources[str(i + 1) * 40] = directory
+                self.sources[f"{i + 1}_" + str(i + 1) * 40] = directory
                 self.bases.append((repo, digest))
             else:
                 self.repo, self.target = repo, digest
@@ -61,6 +85,8 @@ class DeltaIntegrationTests(unittest.TestCase):
         objects = self.snapshot(self.repo / "objects")
         records = assemble.generate_deltas(self.repo, self.target, "uno-q", self.sources)
         self.assertEqual([r["from"] for r in records], [b for _, b in self.bases])
+        self.assertEqual([r["meta_foundries_commit"] for r in records],
+                         [name.split("_", 1)[1] for name in self.sources])
         self.assertTrue(all(r["status"] == "generated" for r in records))
         self.assertEqual(objects, self.snapshot(self.repo / "objects"))
         self.assertEqual(before, [self.snapshot(path) for path in self.sources.values()])

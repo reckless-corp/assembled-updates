@@ -104,8 +104,8 @@ class AssemblyTests(unittest.TestCase):
         self.check_assembly("Pin builds", list(assemble.MACHINES))
 
     def test_assembly_wires_multiple_delta_sources(self):
-        self.check_assembly("Pin builds\nostree-from=" + "c" * 40 +
-                            "\nostree-from=" + "d" * 40, list(assemble.MACHINES))
+        self.check_assembly("Pin builds\nmeta-foundries-from=24_" + "c" * 40 +
+                            "\nmeta-foundries-from=25_" + "d" * 40, list(assemble.MACHINES))
 
     def test_assembly_only_reads_selected_platform(self):
         for machine in assemble.MACHINES:
@@ -134,6 +134,8 @@ class AssemblyTests(unittest.TestCase):
             return {name: {"sha256": "c" * 64,
                            "uri": f"ghcr.io/reckless-corp/{name}@sha256:" + "c" * 64}
                     for name in names}
+        for name in assemble.delta_sources(message):
+            (self.root / "meta-foundries" / name).mkdir(parents=True, exist_ok=True)
         calls = []
         def fake_pull(cmd, check):
             self.assertIn("-l", cmd)
@@ -154,8 +156,8 @@ class AssemblyTests(unittest.TestCase):
         self.assertTrue((output / "provenance.json").is_file())
         git.assert_called_once_with(["git", "show", "-s", "--format=%B", sha, "--"], text=True)
         self.assertEqual(set(record["machines"]), set(machines))
-        expected_sources = {sha: self.root / "meta-foundries"
-                            for sha in assemble.delta_sources(message)}
+        expected_sources = {name: self.root / "meta-foundries" / name
+                            for name in assemble.delta_sources(message)}
         self.assertEqual(deltas.call_count, len(machines))
         for call, machine in zip(deltas.call_args_list, machines):
             self.assertEqual(call.args[0].parts[-2:], (machine, "ostree_repo"))

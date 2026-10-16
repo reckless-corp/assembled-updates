@@ -15,6 +15,7 @@ MACHINES = {
     "uno-q": ("arm64", ["matrix-app", "led-matrix-anim-app"]),
 }
 SHA = re.compile(r"[0-9a-f]{40}")
+ARCHIVE_NAME = re.compile(r"[1-9][0-9]*_[0-9a-f]{40}")
 DIGEST = re.compile(r"[0-9a-f]{64}")
 
 
@@ -48,14 +49,26 @@ def archive_for(root, repo, sha):
 def delta_sources(message):
     sources = []
     for line in message.splitlines():
-        if not line.startswith("ostree-from="):
+        if line.startswith("ostree-from="):
+            raise ValueError("Replace ostree-from with meta-foundries-from=<archive-name>")
+        if not line.startswith("meta-foundries-from="):
             continue
-        sha = line[len("ostree-from="):]
-        if not SHA.fullmatch(sha):
-            raise ValueError("ostree-from must be a full lowercase meta-foundries Git SHA")
-        if sha not in sources:
-            sources.append(sha)
+        name = line[len("meta-foundries-from="):]
+        if not ARCHIVE_NAME.fullmatch(name):
+            raise ValueError("meta-foundries-from must be a completed archive name "
+                             "(<build-number>_<full-lowercase-Git-SHA>)")
+        if name not in sources:
+            sources.append(name)
     return sources
+
+
+def delta_archive(root, name):
+    if not ARCHIVE_NAME.fullmatch(name):
+        raise ValueError(f"Invalid meta-foundries archive name: {name}")
+    archive = Path(root) / "meta-foundries" / name
+    if archive.is_symlink() or not archive.is_dir():
+        raise ValueError(f"Missing completed meta-foundries archive: {archive}")
+    return archive
 
 
 def generate_deltas(repo, target, machine, sources):
@@ -71,7 +84,7 @@ def generate_deltas(repo, target, machine, sources):
         build = work / "repo"
         run("ostree", f"--repo={build}", "init", "--mode=archive")
         run("ostree", f"--repo={build}", "pull-local", str(repo), target)
-        for sha, archive in sources.items():
+        for name, archive in sources.items():
             with tempfile.TemporaryDirectory(dir=work) as extracted:
                 base = extract_ostree(archive / machine / "ostree_repo.tgz", extracted)
                 status = "same-as-target" if base == target else "generated"
@@ -81,7 +94,7 @@ def generate_deltas(repo, target, machine, sources):
                     run("ostree", f"--repo={build}", "static-delta", "generate",
                         f"--from={base}", f"--to={target}", "--min-fallback-size=0")
                     generated.add(base)
-                records.append({"meta_foundries_commit": sha, "archive": str(archive),
+                records.append({"meta_foundries_commit": name.split("_", 1)[1], "archive": str(archive),
                                 "from": base, "to": target, "status": status})
         if generated:
             shutil.copytree(build / "deltas", repo / "deltas", dirs_exist_ok=True)
@@ -199,7 +212,7 @@ def assemble(root, output, composectl):
         if run("git", "-C", repo, "rev-parse", "HEAD") != pins[repo]:
             raise ValueError(f"Submodule checkout mismatch: {repo}")
     archives = {repo: archive_for(root, repo, sha) for repo, sha in pins.items()}
-    sources = {sha: archive_for(root, "meta-foundries", sha) for sha in bases}
+    sources = {name: delta_archive(root, name) for name in bases}
     record = {"assembled_commit": assembled_sha, "pins": pins,
               "archives": {k: str(v) for k, v in archives.items()}, "machines": {}}
     output.parent.mkdir(parents=True, exist_ok=True)

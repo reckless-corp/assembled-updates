@@ -96,22 +96,26 @@ assembled commit message (including the final merge commit for PRs):
 
 ```text
 platform=uno-q
-ostree-from=<full-meta-foundries-Git-SHA-of-previous-build>
-ostree-from=<full-meta-foundries-Git-SHA-of-older-build>
+meta-foundries-from=25_0bd0ec007804c47f767166111e78acdb56ea46d5
+meta-foundries-from=24_86ceaf3bc8c9c038ac5e47575045fe9ec1d507b1
 ```
 
-Replace each placeholder with a full, lowercase, 40-character **meta-foundries
-Git commit**, not an assembled-updates Git commit or a 64-character OSTree hash.
-Each value resolves through the same unique completed NFS archive lookup as
-the current pin. For each selected platform, assembly reads that archive's
-`<machine>/ostree_repo.tgz` and resolves its OSTree checksum. Only selected
-platforms are required in the base archives. Missing or ambiguous archives,
+Use the exact completed archive directory name (`<build-number>_<full-Git-SHA>`)
+from `/var/code/reckless-corp/storage/archive/meta-foundries/`, or
+`<archive-root>/meta-foundries/` when using a different `--archive-root`.
+The build number selects a specific archive even when a Git commit was built
+more than once. Bare Git SHAs, OSTree hashes, and paths are not accepted.
+For each selected platform, assembly reads that archive's
+`<machine>/ostree_repo.tgz` and resolves its OSTree checksum automatically.
+Only selected platforms are required in the base archives. Missing archives,
 invalid values, or delta-generation errors fail assembly before any upload.
+The old `ostree-from=` parameter is rejected with a migration error; replace it
+with `meta-foundries-from=` and the completed archive name.
 
 Repeated lines support devices on multiple older releases. Duplicate values
 are deduplicated; different builds yielding the same OSTree checksum generate
 only one delta. A base equal to the target is recorded as `same-as-target` and
-needs no delta. With no `ostree-from=` lines, assembly behaves as before.
+needs no delta. With no `meta-foundries-from=` lines, assembly behaves as before.
 
 The runner needs `ostree` on PATH (Debian/Ubuntu package: `ostree`) and temporary
 disk space for the target and base repositories. Assembly generates one
